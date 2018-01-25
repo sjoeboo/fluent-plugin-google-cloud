@@ -40,7 +40,7 @@ class GoogleCloudOutputGRPCTest < Test::Unit::TestCase
       GRPC::Core::StatusCodes::ABORTED => 'Aborted',
       GRPC::Core::StatusCodes::UNAUTHENTICATED => 'Unauthenticated'
     }.each_with_index do |(code, message), index|
-      setup_logging_stubs(true, code, message) do
+      setup_logging_stubs(code, message) do
         d = create_driver(USE_GRPC_CONFIG, 'test')
         # The API Client should not retry this and the plugin should consume the
         # exception.
@@ -55,7 +55,7 @@ class GoogleCloudOutputGRPCTest < Test::Unit::TestCase
     setup_gce_metadata_stubs
     setup_prometheus
     setup_logging_stubs(
-      true, GRPC::Core::StatusCodes::PERMISSION_DENIED,
+      GRPC::Core::StatusCodes::PERMISSION_DENIED,
       'User not authorized.', PARTIAL_SUCCESS_GRPC_METADATA) do
       # The API Client should not retry this and the plugin should consume
       # the exception.
@@ -93,7 +93,7 @@ class GoogleCloudOutputGRPCTest < Test::Unit::TestCase
       GRPC::Core::StatusCodes::UNAVAILABLE => 'Unavailable'
     }.each_with_index do |(code, message), index|
       exception_count = 0
-      setup_logging_stubs(true, code, message) do
+      setup_logging_stubs(code, message) do
         d = create_driver(USE_GRPC_CONFIG, 'test')
         # The API client should retry this once, then throw an exception which
         # gets propagated through the plugin
@@ -117,20 +117,20 @@ class GoogleCloudOutputGRPCTest < Test::Unit::TestCase
     setup_gce_metadata_stubs
     [
       # Single successful request.
-      [false, 0, 1, 1, [1, 0, 1, 0, 0]],
+      [0, 1, 1, [1, 0, 1, 0, 0]],
       # Several successful requests.
-      [false, 0, 2, 1, [2, 0, 2, 0, 0]],
+      [0, 2, 1, [2, 0, 2, 0, 0]],
       # Single successful request with several entries.
-      [false, 0, 1, 2, [1, 0, 2, 0, 0]],
+      [0, 1, 2, [1, 0, 2, 0, 0]],
       # Single failed request that causes logs to be dropped.
-      [true, 16, 1, 1, [0, 1, 0, 1, 0]],
+      [16, 1, 1, [0, 1, 0, 1, 0]],
       # Single failed request that escalates without logs being dropped with
       # several entries.
-      [true, 13, 1, 2, [0, 0, 0, 0, 2]]
-    ].each do |should_fail, code, request_count, entry_count, metric_values|
+      [13, 1, 2, [0, 0, 0, 0, 2]]
+    ].each do |code, request_count, entry_count, metric_values|
       setup_prometheus
-      (1..request_count).each do
-        setup_logging_stubs(should_fail, code, 'SomeMessage') do
+      setup_logging_stubs(code, 'SomeMessage') do
+        (1..request_count).each do
           d = create_driver(USE_GRPC_CONFIG + PROMETHEUS_ENABLE_CONFIG, 'test')
           (1..entry_count).each do |i|
             d.emit('message' => log_entry(i.to_s))
@@ -337,17 +337,14 @@ class GoogleCloudOutputGRPCTest < Test::Unit::TestCase
   end
 
   # Set up grpc stubs to mock the external calls.
-  def setup_logging_stubs(should_fail = false,
-                          code = nil,
-                          message = nil,
-                          metadata = {})
-    if should_fail
+  def setup_logging_stubs(code = nil, message = nil, metadata = {})
+    if code == 0 || code.nil?
+      @requests_sent = []
+      @grpc_stub = GRPCLoggingMockService.new(@requests_sent)
+    else
       @failed_attempts = []
       @grpc_stub = GRPCLoggingMockFailingService.new(
         code, message, metadata, @failed_attempts)
-    else
-      @requests_sent = []
-      @grpc_stub = GRPCLoggingMockService.new(@requests_sent)
     end
     yield
   end
